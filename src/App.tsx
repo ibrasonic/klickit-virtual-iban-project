@@ -30,6 +30,7 @@ import {
   type Student,
   type User,
 } from './api';
+import ParentPortal from './ParentPortal';
 
 interface SessionContext {
   user: User | null;
@@ -1639,7 +1640,7 @@ function NotFoundPage() {
   );
 }
 
-export default function App() {
+function SchoolApp() {
   const session = useSession();
   return (
     <Routes>
@@ -1658,4 +1659,9 @@ export default function App() {
       </Route>
     </Routes>
   );
+}
+
+export default function App() {
+  const location = useLocation();
+  return location.pathname.startsWith('/parent') ? <ParentPortal /> : <SchoolApp />;
 }

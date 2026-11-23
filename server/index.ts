@@ -14,6 +14,14 @@ app.use(express.json());
 type VibanStatus = 'not_assigned' | 'pending' | 'active' | 'failed' | 'inactive';
 type InvoiceStatus = 'unpaid' | 'partially_paid' | 'paid';
 type PaymentStatus = 'confirmed' | 'pending' | 'failed';
+type CheckoutStatus =
+  | 'awaiting_payment_confirmation'
+  | 'awaiting_bank_confirmation'
+  | 'partially_paid'
+  | 'paid'
+  | 'cancelled'
+  | 'expired';
+type ParentPaymentMethod = 'virtual_iban' | 'card';
 
 interface Parent {
   id: string;
@@ -87,9 +95,33 @@ interface ImportPreview {
   createdAt: string;
 }
 
+interface CheckoutSession {
+  id: string;
+  paymentIntentId: string;
+  parentId: string;
+  studentId: string;
+  invoiceId: string;
+  requiredAmount: number;
+  previouslyPaidAmount: number;
+  remainingAmount: number;
+  currency: 'SAR';
+  createdAt: string;
+  expiresAt: string;
+  selectedPaymentMethod?: ParentPaymentMethod;
+  intendedAmount?: number;
+  lastReceivedAmount?: number;
+  lastProviderTransactionId?: string;
+  transferCount: number;
+  pendingTransferId?: string;
+  status: CheckoutStatus;
+}
+
 const SCHOOL_ID = 'school-green-valley';
 const SCHOOL_NAME = 'Green Valley International School';
 const sessions = new Map<string, { userId: string; schoolId: string; expiresAt: number }>();
+const parentSessions = new Map<string, { parentId: string; expiresAt: number }>();
+const checkoutSessions = new Map<string, CheckoutSession>();
+const processedProviderTransactions = new Set<string>();
 const previews = new Map<string, ImportPreview>();
 
 const parents: Parent[] = [
@@ -201,6 +233,32 @@ const invoices: Invoice[] = [
     partialAllowed: false,
     createdAt: '2026-10-19T10:00:00.000Z',
   },
+  {
+    id: 'inv-5',
+    batchReference: 'BATCH-ACTIVITIES-2026',
+    studentId: 'stu-1',
+    feeName: 'After-school Activities',
+    category: 'Activities',
+    description: 'Robotics and swimming programme',
+    requiredAmount: 1200,
+    dueDate: '2026-12-05',
+    academicPeriod: '2026/2027 - Term 1',
+    partialAllowed: true,
+    createdAt: '2026-10-20T09:00:00.000Z',
+  },
+  {
+    id: 'inv-6',
+    batchReference: 'BATCH-TRANSPORT-LAILA-2026',
+    studentId: 'stu-2',
+    feeName: 'Annual Transportation',
+    category: 'Transportation',
+    description: 'School bus service',
+    requiredAmount: 6000,
+    dueDate: '2026-12-10',
+    academicPeriod: '2026/2027',
+    partialAllowed: true,
+    createdAt: '2026-10-20T09:05:00.000Z',
+  },
 ];
 
 const payments: Payment[] = [
@@ -274,6 +332,18 @@ function requireAuth(request: Request, response: Response, next: NextFunction) {
   next();
 }
 
+function requireParentAuth(request: Request, response: Response, next: NextFunction) {
+  const token = parseCookies(request).klickit_parent_session;
+  const session = token ? parentSessions.get(token) : undefined;
+  if (!session || session.expiresAt < Date.now()) {
+    if (token) parentSessions.delete(token);
+    response.status(401).json({ message: 'Your parent session has expired. Please sign in again.' });
+    return;
+  }
+  response.locals.parentSession = session;
+  next();
+}
+
 function delay(milliseconds = 250) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -314,6 +384,120 @@ function studentView(student: Student) {
 
 function addAudit(action: string, detail: string) {
   auditLog.unshift({ id: uid('audit'), action, detail, createdAt: now() });
+}
+
+function isActiveCheckout(session: CheckoutSession) {
+  return (
+    session.status === 'awaiting_payment_confirmation' ||
+    session.status === 'awaiting_bank_confirmation' ||
+    session.status === 'partially_paid'
+  );
+}
+
+function latestCheckoutForParent(parentId: string) {
+  return Array.from(checkoutSessions.values())
+    .filter((session) => session.parentId === parentId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+
+function parentOverview(parentId: string) {
+  const parent = parents.find((item) => item.id === parentId)!;
+  const linkedStudents = students
+    .filter((student) => student.parentId === parentId)
+    .map((student) => {
+      const studentInvoices = invoices
+        .filter((invoice) => invoice.studentId === student.id)
+        .map(invoiceView);
+      return {
+        id: student.id,
+        studentCode: student.studentCode,
+        name: student.name,
+        schoolName: SCHOOL_NAME,
+        academicYear: student.academicYear,
+        grade: student.grade,
+        virtualIban: student.viban,
+        vibanStatus: student.vibanStatus,
+        outstanding: studentInvoices.reduce((sum, invoice) => sum + invoice.remainingAmount, 0),
+        invoices: studentInvoices,
+      };
+    });
+  const linkedStudentIds = new Set(linkedStudents.map((student) => student.id));
+  const parentPayments = payments
+    .filter((payment) => linkedStudentIds.has(payment.studentId) && payment.status === 'confirmed')
+    .sort((a, b) => b.transactionDate.localeCompare(a.transactionDate))
+    .map((payment) => ({
+      ...payment,
+      studentName: students.find((student) => student.id === payment.studentId)?.name,
+      invoiceName: invoices.find((invoice) => invoice.id === payment.invoiceId)?.feeName,
+      category: invoices.find((invoice) => invoice.id === payment.invoiceId)?.category,
+      invoice: invoiceView(invoices.find((invoice) => invoice.id === payment.invoiceId)!),
+    }));
+  return {
+    parent: { id: parent.id, name: parent.name },
+    students: linkedStudents,
+    familyOutstanding: linkedStudents.reduce((sum, student) => sum + student.outstanding, 0),
+    payments: parentPayments,
+    checkoutSession: latestCheckoutForParent(parentId) ?? null,
+  };
+}
+
+function processProviderCredit(
+  sessionId: string,
+  pendingTransferId: string,
+  providerTransactionId: string,
+  receivedAmount: number,
+) {
+  if (processedProviderTransactions.has(providerTransactionId)) return;
+  const session = checkoutSessions.get(sessionId);
+  if (
+    !session ||
+    session.pendingTransferId !== pendingTransferId ||
+    session.status !== 'awaiting_bank_confirmation'
+  ) {
+    return;
+  }
+  const invoice = invoices.find((item) => item.id === session.invoiceId);
+  const student = students.find((item) => item.id === session.studentId);
+  if (
+    !invoice ||
+    !student?.viban ||
+    student.parentId !== session.parentId ||
+    invoice.studentId !== student.id ||
+    receivedAmount <= 0
+  ) {
+    session.status = 'partially_paid';
+    delete session.pendingTransferId;
+    addAudit('Provider credit rejected', `${providerTransactionId} failed verification`);
+    return;
+  }
+
+  const amountToApply = Math.min(receivedAmount, invoiceView(invoice).remainingAmount);
+  if (amountToApply <= 0) return;
+  processedProviderTransactions.add(providerTransactionId);
+  payments.push({
+    id: uid('pay'),
+    invoiceId: invoice.id,
+    studentId: student.id,
+    providerTransactionId,
+    amount: amountToApply,
+    currency: 'SAR',
+    status: 'confirmed',
+    reconciliationStatus: 'reconciled',
+    transactionDate: now(),
+  });
+
+  const updatedInvoice = invoiceView(invoice);
+  session.previouslyPaidAmount = updatedInvoice.paidAmount;
+  session.remainingAmount = updatedInvoice.remainingAmount;
+  session.lastReceivedAmount = amountToApply;
+  session.lastProviderTransactionId = providerTransactionId;
+  session.transferCount += 1;
+  session.status = updatedInvoice.status === 'paid' ? 'paid' : 'partially_paid';
+  delete session.pendingTransferId;
+  addAudit(
+    'Provider credit verified and reconciled',
+    `${providerTransactionId}: ${amountToApply} SAR applied to ${invoice.feeName} for ${student.name}`,
+  );
 }
 
 app.post('/api/auth/login', async (request, response) => {
@@ -804,6 +988,201 @@ app.get('/api/parents/search', requireAuth, async (request, response) => {
     students: linkedStudents,
     familyOutstanding: linkedStudents.reduce((sum, student) => sum + student.outstanding, 0),
   });
+});
+
+app.post('/api/parent/auth/login', async (request, response) => {
+  await delay();
+  const { username, password } = request.body as { username?: string; password?: string };
+  if (username !== 'parent' || password !== 'parent') {
+    response.status(401).json({ message: 'The username or password is incorrect.' });
+    return;
+  }
+  const token = crypto.randomBytes(24).toString('hex');
+  parentSessions.set(token, {
+    parentId: 'par-1',
+    expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+  });
+  response.setHeader(
+    'Set-Cookie',
+    `klickit_parent_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`,
+  );
+  addAudit('Parent signed in', 'Mariam Hassan parent session created');
+  response.json({ parent: { id: 'par-1', name: 'Mariam Hassan' } });
+});
+
+app.get('/api/parent/auth/session', requireParentAuth, (_request, response) => {
+  const { parentId } = response.locals.parentSession as { parentId: string };
+  const parent = parents.find((item) => item.id === parentId)!;
+  response.json({ parent: { id: parent.id, name: parent.name } });
+});
+
+app.post('/api/parent/auth/logout', requireParentAuth, (request, response) => {
+  const token = parseCookies(request).klickit_parent_session;
+  if (token) parentSessions.delete(token);
+  response.setHeader(
+    'Set-Cookie',
+    'klickit_parent_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0',
+  );
+  response.status(204).end();
+});
+
+app.get('/api/parent/overview', requireParentAuth, async (_request, response) => {
+  await delay(100);
+  const { parentId } = response.locals.parentSession as { parentId: string };
+  response.json(parentOverview(parentId));
+});
+
+app.post('/api/parent/checkout', requireParentAuth, async (request, response) => {
+  const { parentId } = response.locals.parentSession as { parentId: string };
+  const { invoiceId } = request.body as { invoiceId?: string };
+  const activeSession = Array.from(checkoutSessions.values()).find(
+    (session) => session.parentId === parentId && isActiveCheckout(session),
+  );
+  if (activeSession) {
+    if (activeSession.invoiceId === invoiceId) {
+      response.json({ checkoutSession: activeSession });
+      return;
+    }
+    response.status(409).json({
+      message: 'Complete the active Checkout session before selecting another invoice.',
+      checkoutSession: activeSession,
+    });
+    return;
+  }
+  const invoice = invoiceId ? invoices.find((item) => item.id === invoiceId) : undefined;
+  const student = invoice ? students.find((item) => item.id === invoice.studentId) : undefined;
+  if (!invoice || !student || student.parentId !== parentId) {
+    response.status(404).json({ message: 'The selected invoice is unavailable.' });
+    return;
+  }
+  const view = invoiceView(invoice);
+  if (view.status === 'paid') {
+    response.status(409).json({ message: 'This invoice is already paid.' });
+    return;
+  }
+  if (!student.viban || student.vibanStatus !== 'active') {
+    response.status(409).json({ message: 'The student does not have an active Virtual IBAN.' });
+    return;
+  }
+  const createdAt = new Date();
+  const session: CheckoutSession = {
+    id: uid('checkout'),
+    paymentIntentId: `pi_${crypto.randomBytes(5).toString('hex')}`,
+    parentId,
+    studentId: student.id,
+    invoiceId: invoice.id,
+    requiredAmount: invoice.requiredAmount,
+    previouslyPaidAmount: view.paidAmount,
+    remainingAmount: view.remainingAmount,
+    currency: 'SAR',
+    createdAt: createdAt.toISOString(),
+    expiresAt: new Date(createdAt.getTime() + 30 * 60 * 1000).toISOString(),
+    transferCount: 0,
+    status: 'awaiting_payment_confirmation',
+  };
+  checkoutSessions.set(session.id, session);
+  response.status(201).json({ checkoutSession: session });
+});
+
+app.patch('/api/parent/checkout/:id/method', requireParentAuth, (request, response) => {
+  const { parentId } = response.locals.parentSession as { parentId: string };
+  const session = checkoutSessions.get(String(request.params.id));
+  const { paymentMethod } = request.body as { paymentMethod?: ParentPaymentMethod };
+  if (!session || session.parentId !== parentId) {
+    response.status(404).json({ message: 'The Checkout session was not found.' });
+    return;
+  }
+  if (!isActiveCheckout(session) || session.status === 'awaiting_bank_confirmation') {
+    response.status(409).json({ message: 'The payment method cannot be changed now.' });
+    return;
+  }
+  if (paymentMethod !== 'virtual_iban' && paymentMethod !== 'card') {
+    response.status(400).json({ message: 'Select an available payment method.' });
+    return;
+  }
+  session.selectedPaymentMethod = paymentMethod;
+  response.json({ checkoutSession: session });
+});
+
+app.post('/api/parent/checkout/:id/transfers', requireParentAuth, (request, response) => {
+  const { parentId } = response.locals.parentSession as { parentId: string };
+  const session = checkoutSessions.get(String(request.params.id));
+  const enteredAmount = Number((request.body as { intendedAmount?: number }).intendedAmount);
+  if (!session || session.parentId !== parentId) {
+    response.status(404).json({ message: 'The Checkout session was not found.' });
+    return;
+  }
+  if (
+    session.status !== 'awaiting_payment_confirmation' &&
+    session.status !== 'partially_paid'
+  ) {
+    response.status(409).json({ message: 'This Checkout session cannot receive another transfer.' });
+    return;
+  }
+  if (!session.selectedPaymentMethod) {
+    response.status(400).json({ message: 'Select a payment method before continuing.' });
+    return;
+  }
+  const intendedAmount =
+    session.selectedPaymentMethod === 'card' ? session.remainingAmount : enteredAmount;
+  if (
+    session.selectedPaymentMethod === 'virtual_iban' &&
+    (!Number.isFinite(intendedAmount) || intendedAmount <= 0)
+  ) {
+    response.status(400).json({ message: 'Enter a valid bank-transfer amount.' });
+    return;
+  }
+  if (
+    session.selectedPaymentMethod === 'virtual_iban' &&
+    intendedAmount !== session.remainingAmount
+  ) {
+    response.status(400).json({
+      message: `Enter the complete remaining balance of ${session.remainingAmount} SAR for this bank transfer.`,
+    });
+    return;
+  }
+
+  const pendingTransferId = uid('pending-transfer');
+  const providerTransactionId = `ARB-SBX-${Date.now()}`;
+  const receivedAmount =
+    session.selectedPaymentMethod === 'virtual_iban' &&
+    session.transferCount === 0 &&
+    intendedAmount >= 2000
+      ? intendedAmount - 1000
+      : intendedAmount;
+  session.intendedAmount = intendedAmount;
+  session.status = 'awaiting_bank_confirmation';
+  session.pendingTransferId = pendingTransferId;
+  setTimeout(
+    () =>
+      processProviderCredit(
+        session.id,
+        pendingTransferId,
+        providerTransactionId,
+        receivedAmount,
+      ),
+    5000,
+  );
+  response.status(202).json({
+    checkoutSession: session,
+    message: 'Transfer instructions confirmed. Waiting for the provider credit notification.',
+  });
+});
+
+app.post('/api/parent/checkout/:id/cancel', requireParentAuth, (request, response) => {
+  const { parentId } = response.locals.parentSession as { parentId: string };
+  const session = checkoutSessions.get(String(request.params.id));
+  if (!session || session.parentId !== parentId) {
+    response.status(404).json({ message: 'The Checkout session was not found.' });
+    return;
+  }
+  if (!isActiveCheckout(session)) {
+    response.status(409).json({ message: 'This Checkout session is already closed.' });
+    return;
+  }
+  session.status = 'cancelled';
+  delete session.pendingTransferId;
+  response.json({ checkoutSession: session });
 });
 
 app.get('/api/audit', requireAuth, (_request, response) => {
