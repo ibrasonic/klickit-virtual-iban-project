@@ -386,7 +386,7 @@ function ParentDashboard({ data }: { data: ParentOverviewData }) {
   );
 }
 
-function ParentInvoiceCard({
+function ParentInvoiceStudentRow({
   invoice,
   student,
   checkoutSession,
@@ -400,65 +400,94 @@ function ParentInvoiceCard({
   const currentInvoice = activeSession?.invoiceId === invoice.id;
 
   return (
-    <article className="parent-invoice-card">
-      <div className="parent-invoice-main">
+    <div className="parent-fee-student-row">
+      <div className="parent-fee-student">
+        <span className="parent-student-avatar" aria-hidden="true">
+          {student.name
+            .split(' ')
+            .map((part) => part[0])
+            .join('')
+            .slice(0, 2)}
+        </span>
+        <div>
+          <strong>{student.name}</strong>
+          <span>{student.studentCode}</span>
+        </div>
+      </div>
+      <ParentStatus status={invoice.status} />
+      <div className="parent-fee-amount">
+        <span>Required</span>
+        <strong>{formatSar(invoice.requiredAmount)}</strong>
+      </div>
+      <div className="parent-fee-amount">
+        <span>Paid</span>
+        <strong>{formatSar(invoice.paidAmount)}</strong>
+      </div>
+      <div className="parent-fee-amount parent-fee-remaining">
+        <span>Remaining</span>
+        <strong>{formatSar(invoice.remainingAmount)}</strong>
+      </div>
+      <div className="parent-fee-row-action">
+        {invoice.status !== 'paid' && !activeSession && (
+          <Link className="button button-primary" to={`/parent/checkout/start/${invoice.id}`}>
+            Pay
+          </Link>
+        )}
+        {currentInvoice && (
+          <Link className="button button-primary" to="/parent/checkout">
+            Continue
+          </Link>
+        )}
+        {invoice.status !== 'paid' && activeSession && !currentInvoice && (
+          <span className="parent-payment-locked">Payment in progress</span>
+        )}
+        {invoice.status === 'paid' && <span className="parent-paid-check">✓ Reconciled</span>}
+        <Link className="text-link" to={`/parent/history?student=${student.id}`}>
+          History
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function ParentInvoiceGroup({
+  rows,
+  checkoutSession,
+}: {
+  rows: Array<{ invoice: ParentInvoice; student: ParentStudent }>;
+  checkoutSession: CheckoutSession | null;
+}) {
+  const { invoice } = rows[0]!;
+
+  return (
+    <section className="parent-invoice-card parent-fee-group">
+      <header className="parent-fee-group-header">
         <div>
           <div className="parent-invoice-title-row">
-            <span className="parent-invoice-icon" aria-hidden="true">
-              ▤
-            </span>
+            <span className="parent-invoice-icon" aria-hidden="true">▤</span>
             <div>
               <p className="eyebrow">{invoice.category}</p>
               <h2>{invoice.feeName}</h2>
             </div>
           </div>
           <p>{invoice.description}</p>
-          <div className="parent-invoice-meta">
-            <span>{student.name}</span>
-            <span>{invoice.academicPeriod}</span>
-            <span>Due {formatDate(invoice.dueDate)}</span>
-          </div>
         </div>
-        <ParentStatus status={invoice.status} />
+        <div className="parent-fee-group-meta">
+          <span>{invoice.academicPeriod}</span>
+          <strong>Due {formatDate(invoice.dueDate)}</strong>
+          <small>{rows.length} {rows.length === 1 ? 'student' : 'students'}</small>
+        </div>
+      </header>
+      <div className="parent-fee-student-list">
+        {rows.map((row) => (
+          <ParentInvoiceStudentRow
+            key={row.invoice.id}
+            {...row}
+            checkoutSession={checkoutSession}
+          />
+        ))}
       </div>
-      <div className="parent-invoice-amounts">
-        <div>
-          <span>Required</span>
-          <strong>{formatSar(invoice.requiredAmount)}</strong>
-        </div>
-        <div>
-          <span>Verified paid</span>
-          <strong>{formatSar(invoice.paidAmount)}</strong>
-        </div>
-        <div>
-          <span>Remaining</span>
-          <strong>{formatSar(invoice.remainingAmount)}</strong>
-        </div>
-      </div>
-      <div className="parent-invoice-actions">
-        {invoice.status !== 'paid' && !activeSession && (
-          <Link className="button button-primary" to={`/parent/checkout/start/${invoice.id}`}>
-            Pay this invoice
-          </Link>
-        )}
-        {currentInvoice && (
-          <Link className="button button-primary" to="/parent/checkout">
-            Continue active payment
-          </Link>
-        )}
-        {invoice.status !== 'paid' && activeSession && !currentInvoice && (
-          <span className="parent-blocked-action">
-            Complete the active Checkout session before paying another invoice.
-          </span>
-        )}
-        {invoice.status === 'paid' && (
-          <span className="parent-paid-message">✓ This invoice is fully paid and reconciled</span>
-        )}
-        <Link className="text-link" to={`/parent/history?student=${student.id}`}>
-          View payment history
-        </Link>
-      </div>
-    </article>
+    </section>
   );
 }
 
@@ -478,6 +507,20 @@ function ParentInvoices({
     ({ student, invoice }) =>
       (studentFilter === 'all' || student.id === studentFilter) &&
       (statusFilter === 'all' || invoice.status === statusFilter),
+  );
+  const groups = Array.from(
+    visible.reduce((grouped, row) => {
+      const key = [
+        row.invoice.feeName,
+        row.invoice.category,
+        row.invoice.academicPeriod,
+        row.invoice.dueDate,
+      ].join('|');
+      const group = grouped.get(key) ?? [];
+      group.push(row);
+      grouped.set(key, group);
+      return grouped;
+    }, new Map<string, typeof visible>()),
   );
 
   return (
@@ -512,14 +555,13 @@ function ParentInvoices({
             <option value="paid">Paid</option>
           </select>
         </label>
-        <span>{visible.length} invoices</span>
+        <span>{groups.length} {groups.length === 1 ? 'fee' : 'fees'}</span>
       </div>
       <div className="parent-invoice-list">
-        {visible.map(({ student, invoice }) => (
-          <ParentInvoiceCard
-            key={invoice.id}
-            invoice={invoice}
-            student={student}
+        {groups.map(([key, groupRows]) => (
+          <ParentInvoiceGroup
+            key={key}
+            rows={groupRows}
             checkoutSession={data.checkoutSession}
           />
         ))}

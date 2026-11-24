@@ -2570,6 +2570,127 @@ td input[type="checkbox"] {
     overflow: hidden;
   }
 
+  .parent-fee-group-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 21px 24px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .parent-fee-group-header > div:first-child > p {
+    margin: 8px 0 0;
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+
+  .parent-fee-group-meta {
+    display: grid;
+    flex: 0 0 auto;
+    justify-items: end;
+    gap: 3px;
+    color: var(--muted);
+    font-size: 0.7rem;
+  }
+
+  .parent-fee-group-meta strong {
+    color: var(--ink);
+    font-size: 0.76rem;
+  }
+
+  .parent-fee-group-meta small {
+    color: var(--teal-dark);
+    font-weight: 800;
+  }
+
+  .parent-fee-student-list {
+    display: grid;
+  }
+
+  .parent-fee-student-row {
+    display: grid;
+    grid-template-columns: minmax(190px, 1.2fr) auto repeat(3, minmax(90px, 0.55fr)) minmax(150px, auto);
+    align-items: center;
+    gap: 18px;
+    padding: 17px 24px;
+    border-bottom: 1px solid #edf1f3;
+  }
+
+  .parent-fee-student-row:last-child {
+    border-bottom: 0;
+  }
+
+  .parent-fee-student {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+  }
+
+  .parent-fee-student .parent-student-avatar {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+    font-size: 0.7rem;
+  }
+
+  .parent-fee-student > div {
+    display: grid;
+    gap: 2px;
+  }
+
+  .parent-fee-student strong {
+    color: var(--ink);
+    font-size: 0.82rem;
+  }
+
+  .parent-fee-student span:not(.parent-student-avatar),
+  .parent-fee-amount span {
+    color: var(--muted);
+    font-size: 0.67rem;
+  }
+
+  .parent-fee-amount {
+    display: grid;
+    gap: 3px;
+  }
+
+  .parent-fee-amount strong {
+    color: var(--ink);
+    font-size: 0.79rem;
+  }
+
+  .parent-fee-remaining strong {
+    color: var(--teal-dark);
+  }
+
+  .parent-fee-row-action {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 11px;
+  }
+
+  .parent-fee-row-action .button {
+    min-width: 82px;
+    padding: 9px 13px;
+  }
+
+  .parent-fee-row-action .text-link {
+    font-size: 0.7rem;
+  }
+
+  .parent-payment-locked,
+  .parent-paid-check {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 750;
+  }
+
+  .parent-paid-check {
+    color: var(--success);
+  }
+
   .parent-invoice-main {
     display: flex;
     align-items: flex-start;
@@ -3418,6 +3539,28 @@ td input[type="checkbox"] {
 
     .parent-invoice-main {
       flex-direction: column;
+    }
+
+    .parent-fee-group-header {
+      flex-direction: column;
+    }
+
+    .parent-fee-group-meta {
+      justify-items: start;
+    }
+
+    .parent-fee-student-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .parent-fee-amount {
+      padding-left: 47px;
+    }
+
+    .parent-fee-row-action {
+      grid-column: 1 / -1;
+      justify-content: flex-start;
+      padding-left: 47px;
     }
 
     .parent-invoice-amounts,
