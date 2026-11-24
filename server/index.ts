@@ -123,6 +123,7 @@ const parentSessions = new Map<string, { parentId: string; expiresAt: number }>(
 const checkoutSessions = new Map<string, CheckoutSession>();
 const processedProviderTransactions = new Set<string>();
 const previews = new Map<string, ImportPreview>();
+const publicReferenceKey = crypto.randomBytes(32);
 
 const parents: Parent[] = [
   { id: 'par-1', name: 'Mariam Hassan', nationalId: '12345678910' },
@@ -248,15 +249,15 @@ const invoices: Invoice[] = [
   },
   {
     id: 'inv-6',
-    batchReference: 'BATCH-TRANSPORT-LAILA-2026',
+    batchReference: 'BATCH-TRANSPORT-2026',
     studentId: 'stu-2',
     feeName: 'Annual Transportation',
     category: 'Transportation',
     description: 'School bus service',
     requiredAmount: 6000,
-    dueDate: '2026-12-10',
+    dueDate: '2026-11-01',
     academicPeriod: '2026/2027',
-    partialAllowed: true,
+    partialAllowed: false,
     createdAt: '2026-10-20T09:05:00.000Z',
   },
 ];
@@ -305,6 +306,30 @@ function now() {
 
 function uid(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function publicReferenceToken(prefix: string, internalId: string) {
+  const token = crypto
+    .createHmac('sha256', publicReferenceKey)
+    .update(internalId)
+    .digest('hex')
+    .slice(0, 6)
+    .toUpperCase();
+  return `${prefix}${token}`;
+}
+
+function providerTransactionReference(session: CheckoutSession) {
+  const provider = session.selectedPaymentMethod === 'card' ? 'HYP' : 'ARB';
+  const studentReference = publicReferenceToken('VR', session.studentId);
+  const parentReference = publicReferenceToken('PR', session.parentId);
+  const invoiceReference = session.invoiceId.replace(/[^a-z0-9]/gi, '').toUpperCase();
+  const paymentNumber = payments.filter(
+    (payment) => payment.invoiceId === session.invoiceId && payment.status === 'confirmed',
+  ).length + 1;
+
+  return `${provider}-${studentReference}-${invoiceReference}-${parentReference}-P${paymentNumber
+    .toString()
+    .padStart(2, '0')}`;
 }
 
 function parseCookies(request: Request) {
@@ -831,6 +856,15 @@ app.get('/api/invoices', requireAuth, async (_request, response) => {
         paid: views.filter((invoice) => invoice.status === 'paid').length,
         partiallyPaid: views.filter((invoice) => invoice.status === 'partially_paid').length,
         unpaid: views.filter((invoice) => invoice.status === 'unpaid').length,
+        students: items.map((invoice, index) => {
+          const student = students.find((item) => item.id === invoice.studentId)!;
+          return {
+            id: student.id,
+            name: student.name,
+            studentCode: student.studentCode,
+            status: views[index]!.status,
+          };
+        }),
       };
     }),
   });
@@ -1107,7 +1141,16 @@ app.patch('/api/parent/checkout/:id/method', requireParentAuth, (request, respon
 app.post('/api/parent/checkout/:id/transfers', requireParentAuth, (request, response) => {
   const { parentId } = response.locals.parentSession as { parentId: string };
   const session = checkoutSessions.get(String(request.params.id));
-  const enteredAmount = Number((request.body as { intendedAmount?: number }).intendedAmount);
+  const { intendedAmount: requestedAmount, cardDetails } = request.body as {
+    intendedAmount?: number;
+    cardDetails?: {
+      cardholderName?: string;
+      cardNumber?: string;
+      expiry?: string;
+      cvc?: string;
+    };
+  };
+  const enteredAmount = Number(requestedAmount);
   if (!session || session.parentId !== parentId) {
     response.status(404).json({ message: 'The Checkout session was not found.' });
     return;
@@ -1141,9 +1184,27 @@ app.post('/api/parent/checkout/:id/transfers', requireParentAuth, (request, resp
     });
     return;
   }
+  if (session.selectedPaymentMethod === 'card') {
+    if (!cardDetails?.cardholderName?.trim()) {
+      response.status(400).json({ message: 'Enter the cardholder name.' });
+      return;
+    }
+    if (!/^\d{16}$/.test(cardDetails.cardNumber ?? '')) {
+      response.status(400).json({ message: 'Card number must contain exactly 16 digits.' });
+      return;
+    }
+    if (!/^(0[1-9]|1[0-2])\/\d{2}$/.test(cardDetails.expiry ?? '')) {
+      response.status(400).json({ message: 'Expiry date must use MM/YY with a valid month.' });
+      return;
+    }
+    if (!/^\d{3}$/.test(cardDetails.cvc ?? '')) {
+      response.status(400).json({ message: 'CVC must contain exactly 3 digits.' });
+      return;
+    }
+  }
 
   const pendingTransferId = uid('pending-transfer');
-  const providerTransactionId = `ARB-SBX-${Date.now()}`;
+  const providerTransactionId = providerTransactionReference(session);
   const receivedAmount =
     session.selectedPaymentMethod === 'virtual_iban' &&
     session.transferCount === 0 &&
@@ -1165,7 +1226,10 @@ app.post('/api/parent/checkout/:id/transfers', requireParentAuth, (request, resp
   );
   response.status(202).json({
     checkoutSession: session,
-    message: 'Transfer instructions confirmed. Waiting for the provider credit notification.',
+    message:
+      session.selectedPaymentMethod === 'card'
+        ? 'Card payment submitted to the HyperPay demo payment service.'
+        : 'Transfer instructions confirmed. Waiting for the provider credit notification.',
   });
 });
 

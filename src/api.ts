@@ -69,6 +69,12 @@ export interface InvoiceGroup {
   paid: number;
   partiallyPaid: number;
   unpaid: number;
+  students: Array<{
+    id: string;
+    name: string;
+    studentCode: string;
+    status: Invoice['status'];
+  }>;
 }
 
 export interface ImportRow {

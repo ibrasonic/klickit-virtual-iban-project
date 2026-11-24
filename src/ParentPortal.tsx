@@ -21,6 +21,13 @@ type CheckoutStatus =
   | 'expired';
 type PaymentMethod = 'virtual_iban' | 'card';
 
+interface CardDetails {
+  cardholderName: string;
+  cardNumber: string;
+  expiry: string;
+  cvc: string;
+}
+
 interface ParentInvoice {
   id: string;
   studentId: string;
@@ -199,6 +206,9 @@ function ParentLogin({ session }: { session: ParentSession }) {
       </section>
       <section className="parent-login-form-section" aria-labelledby="parent-login-heading">
         <form className="parent-login-card" onSubmit={submit}>
+          <Link className="portal-switch-link" to="/">
+            ← Choose another portal
+          </Link>
           <p className="eyebrow">Parent access</p>
           <h2 id="parent-login-heading">Welcome back</h2>
           <p>Sign in to review and pay your family’s school fees.</p>
@@ -225,8 +235,8 @@ function ParentLogin({ session }: { session: ParentSession }) {
           <button className="button button-primary button-block" type="submit" disabled={submitting}>
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>
-          <p className="parent-demo-credentials">
-            Prototype access: <strong>parent</strong> / <strong>parent</strong>
+          <p className="parent-login-credentials">
+            Access credentials: <strong>parent</strong> / <strong>parent</strong>
           </p>
         </form>
       </section>
@@ -618,6 +628,12 @@ function CheckoutPage({
   const student = data.students.find((item) => item.id === session?.studentId);
   const invoice = student?.invoices.find((item) => item.id === session?.invoiceId);
   const [amount, setAmount] = useState(session?.remainingAmount.toString() ?? '');
+  const [cardDetails, setCardDetails] = useState<CardDetails>({
+    cardholderName: '',
+    cardNumber: '',
+    expiry: '',
+    cvc: '',
+  });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -651,6 +667,27 @@ function CheckoutPage({
   async function submitTransfer(event: FormEvent) {
     event.preventDefault();
     setError('');
+
+    if (session!.selectedPaymentMethod === 'card') {
+      const digits = cardDetails.cardNumber.replace(/\s/g, '');
+      if (!cardDetails.cardholderName.trim()) {
+        setError('Enter the cardholder name.');
+        return;
+      }
+      if (!/^\d{16}$/.test(digits)) {
+        setError('Card number must contain exactly 16 digits.');
+        return;
+      }
+      if (!/^(0[1-9]|1[0-2])\/\d{2}$/.test(cardDetails.expiry)) {
+        setError('Expiry date must use MM/YY with a valid month.');
+        return;
+      }
+      if (!/^\d{3}$/.test(cardDetails.cvc)) {
+        setError('CVC must contain exactly 3 digits.');
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       await api(`/api/parent/checkout/${session!.id}/transfers`, {
@@ -660,6 +697,14 @@ function CheckoutPage({
             session!.selectedPaymentMethod === 'virtual_iban'
               ? Number(amount)
               : session!.remainingAmount,
+          ...(session!.selectedPaymentMethod === 'card'
+            ? {
+                cardDetails: {
+                  ...cardDetails,
+                  cardNumber: cardDetails.cardNumber.replace(/\s/g, ''),
+                },
+              }
+            : {}),
         }),
       });
       await refresh();
@@ -691,7 +736,12 @@ function CheckoutPage({
             <small>Checkout</small>
           </div>
         </Link>
-        <div className="parent-checkout-security">🔒 Provider-verified Checkout</div>
+        <div className="parent-checkout-security">
+          🔒{' '}
+          {session.selectedPaymentMethod === 'card'
+            ? 'Card payment secured by HyperPay'
+            : 'Provider-verified Checkout'}
+        </div>
       </header>
       <div className="parent-checkout-body">
         <section className="parent-checkout-flow">
@@ -725,8 +775,9 @@ function CheckoutPage({
                 <p className="eyebrow">Payment verified</p>
                 <h1>Payment successful</h1>
                 <p>
-                  The provider credit was verified, the invoice was paid, and the reconciliation
-                  result is now visible in both parent and school records.
+                  {session.lastProviderTransactionId?.startsWith('HYP-')
+                    ? 'HyperPay approved the card payment. The invoice was paid, and the reconciliation result is now visible in both parent and school records.'
+                    : 'The provider credit was verified, the invoice was paid, and the reconciliation result is now visible in both parent and school records.'}
                 </p>
                 <strong>{formatSar(session.lastReceivedAmount ?? 0)} received</strong>
                 <small className="mono">{session.lastProviderTransactionId}</small>
@@ -807,19 +858,25 @@ function CheckoutPage({
                   </div>
                 )}
                 {session.selectedPaymentMethod === 'card' && (
-                  <div className="parent-card-charge parent-method-details">
-                    <span className="parent-card-visual" aria-hidden="true">
-                      <i />
-                      <strong>Klickit</strong>
-                      <small>SECURE CARD PAYMENT</small>
-                    </span>
-                    <div>
-                      <p className="eyebrow">Full balance payment</p>
-                      <h2>{formatSar(session.remainingAmount)}</h2>
-                      <p>
-                        Your card will be charged the full remaining invoice balance. No separate
-                        amount entry is required.
-                      </p>
+                  <div className="parent-method-details">
+                    <div className="parent-hyperpay-brand" aria-label="HyperPay Secure Checkout">
+                      <span className="parent-hyperpay-symbol" aria-hidden="true">H</span>
+                      <span>
+                        <strong>HyperPay</strong>
+                        <small>Secure Checkout</small>
+                      </span>
+                      <em>Card processing</em>
+                    </div>
+                    <div className="parent-card-charge">
+                      <span className="parent-card-visual" aria-hidden="true">
+                        <i />
+                        <strong>HyperPay</strong>
+                        <small>SECURE CARD PAYMENT</small>
+                      </span>
+                      <div>
+                        <p className="eyebrow">HyperPay secure checkout</p>
+                        <h2>{formatSar(session.remainingAmount)}</h2>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -827,10 +884,15 @@ function CheckoutPage({
                   <div className="parent-receiving-state" role="status" aria-live="polite">
                     <span className="spinner" aria-hidden="true" />
                     <div>
-                      <strong>Receiving transfer confirmation…</strong>
+                      <strong>
+                        {session.selectedPaymentMethod === 'card'
+                          ? 'Processing securely with HyperPay…'
+                          : 'Receiving transfer confirmation…'}
+                      </strong>
                       <p>
-                        The provider is verifying the bank credit. This normally takes about five
-                        seconds in the sandbox.
+                        {session.selectedPaymentMethod === 'card'
+                          ? 'HyperPay is authorizing the card payment. This normally takes about five seconds.'
+                          : 'The provider is verifying the bank credit. This normally takes about five seconds.'}
                       </p>
                     </div>
                   </div>
@@ -860,9 +922,86 @@ function CheckoutPage({
                       </>
                     )}
                     {session.selectedPaymentMethod === 'card' && (
-                      <div className="parent-card-confirmation">
-                        <span>Total card charge</span>
-                        <strong>{formatSar(session.remainingAmount)}</strong>
+                      <div className="parent-card-fields">
+                        <label className="parent-cardholder-field">
+                          Name on card
+                          <input
+                            type="text"
+                            autoComplete="cc-name"
+                            maxLength={80}
+                            value={cardDetails.cardholderName}
+                            onChange={(event) =>
+                              setCardDetails((current) => ({
+                                ...current,
+                                cardholderName: event.target.value,
+                              }))
+                            }
+                            required
+                          />
+                        </label>
+                        <label className="parent-card-number-field">
+                          Card number
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="cc-number"
+                            maxLength={19}
+                            placeholder="1234 5678 9012 3456"
+                            value={cardDetails.cardNumber}
+                            onChange={(event) => {
+                              const digits = event.target.value.replace(/\D/g, '').slice(0, 16);
+                              setCardDetails((current) => ({
+                                ...current,
+                                cardNumber: digits.replace(/(\d{4})(?=\d)/g, '$1 '),
+                              }));
+                            }}
+                            required
+                          />
+                        </label>
+                        <label>
+                          Expiry (MM/YY)
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="cc-exp"
+                            maxLength={5}
+                            placeholder="MM/YY"
+                            value={cardDetails.expiry}
+                            onChange={(event) => {
+                              const digits = event.target.value.replace(/\D/g, '').slice(0, 4);
+                              setCardDetails((current) => ({
+                                ...current,
+                                expiry:
+                                  digits.length > 2
+                                    ? `${digits.slice(0, 2)}/${digits.slice(2)}`
+                                    : digits,
+                              }));
+                            }}
+                            required
+                          />
+                        </label>
+                        <label>
+                          CVC
+                          <input
+                            type="password"
+                            inputMode="numeric"
+                            autoComplete="cc-csc"
+                            maxLength={3}
+                            placeholder="123"
+                            value={cardDetails.cvc}
+                            onChange={(event) =>
+                              setCardDetails((current) => ({
+                                ...current,
+                                cvc: event.target.value.replace(/\D/g, '').slice(0, 3),
+                              }))
+                            }
+                            required
+                          />
+                        </label>
+                        <div className="parent-card-confirmation">
+                          <span>Total card charge</span>
+                          <strong>{formatSar(session.remainingAmount)}</strong>
+                        </div>
                       </div>
                     )}
                     <div className="parent-checkout-actions">
@@ -872,9 +1011,11 @@ function CheckoutPage({
                         disabled={!session.selectedPaymentMethod || submitting}
                       >
                         {submitting
-                          ? 'Contacting provider…'
+                          ? session.selectedPaymentMethod === 'card'
+                            ? 'Connecting to HyperPay…'
+                            : 'Contacting provider…'
                           : session.selectedPaymentMethod === 'card'
-                            ? `Pay ${formatSar(session.remainingAmount)} by card`
+                            ? `Pay ${formatSar(session.remainingAmount)} with HyperPay`
                             : `Confirm ${formatSar(session.remainingAmount)} transfer`}
                       </button>
                       <button className="button button-ghost" type="button" onClick={() => void cancel()}>

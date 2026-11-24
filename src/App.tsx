@@ -164,7 +164,7 @@ function ProtectedLayout({ session }: { session: SessionContext }) {
           <span className="provider-dot" aria-hidden="true" />
           <div>
             <strong>Bank integration</strong>
-            <span>Sandbox connected</span>
+            <span>Provider connected</span>
           </div>
         </div>
       </aside>
@@ -272,6 +272,9 @@ function LoginPage({ session }: { session: SessionContext }) {
       </section>
       <section className="login-panel" aria-labelledby="login-heading">
         <form className="login-card" onSubmit={submit}>
+          <Link className="portal-switch-link" to="/">
+            ← Choose another portal
+          </Link>
           <p className="eyebrow">School finance portal</p>
           <h2 id="login-heading">Welcome back</h2>
           <p>Sign in to manage your school’s collections.</p>
@@ -431,10 +434,6 @@ function DashboardPage() {
             <div>
               <dt>Provider</dt>
               <dd>Neotek / Al Rajhi Bank</dd>
-            </div>
-            <div>
-              <dt>Environment</dt>
-              <dd>Sandbox</dd>
             </div>
             <div>
               <dt>Collection account</dt>
@@ -1064,39 +1063,67 @@ function InvoicesPage() {
         {loading ? (
           <Loading label="Loading invoices" />
         ) : groups.length ? (
-          <div className="invoice-grid">
-            {groups.map((invoice) => (
-              <article className="invoice-card" key={invoice.batchReference}>
-                <div className="invoice-card-top">
-                  <span className="category-chip">{invoice.category}</span>
-                  <span>{invoice.academicPeriod}</span>
-                </div>
-                <h2>{invoice.feeName}</h2>
-                <p>{invoice.description}</p>
-                <dl className="invoice-metrics">
-                  <div>
-                    <dt>Expected</dt>
-                    <dd>{formatSar(invoice.expected)}</dd>
+          <div className="invoice-list">
+            {groups.map((invoice) => {
+              const collectionRate =
+                invoice.expected > 0 ? Math.round((invoice.collected / invoice.expected) * 100) : 0;
+              return (
+                <article className="invoice-list-item" key={invoice.batchReference}>
+                  <div className="invoice-list-main">
+                    <div className="invoice-card-top">
+                      <span className="category-chip">{invoice.category}</span>
+                      <span>{invoice.academicPeriod}</span>
+                    </div>
+                    <h2>{invoice.feeName}</h2>
+                    <p>
+                      {formatSar(invoice.requiredAmountPerStudent)} per student · Due{' '}
+                      {formatDate(invoice.dueDate)}
+                    </p>
+                    <div className="invoice-students">
+                      <span>Assigned students</span>
+                      <div>
+                        {invoice.students.slice(0, 4).map((student) => (
+                          <span className="invoice-student-chip" key={student.id}>
+                            {student.name}
+                          </span>
+                        ))}
+                        {invoice.students.length > 4 && (
+                          <span className="invoice-student-chip">
+                            +{invoice.students.length - 4} more
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <dt>Collected</dt>
-                    <dd>{formatSar(invoice.collected)}</dd>
+                  <div className="invoice-list-summary">
+                    <div>
+                      <span>Collection progress</span>
+                      <strong>{collectionRate}%</strong>
+                    </div>
+                    <div
+                      className="invoice-progress"
+                      role="progressbar"
+                      aria-label={`${invoice.feeName} collection progress`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={collectionRate}
+                    >
+                      <span style={{ width: `${collectionRate}%` }} />
+                    </div>
+                    <p>
+                      <strong>{formatSar(invoice.collected)}</strong> of{' '}
+                      {formatSar(invoice.expected)} collected
+                    </p>
+                    <Link
+                      className="button button-secondary"
+                      to={`/invoices/${invoice.batchReference}`}
+                    >
+                      View students
+                    </Link>
                   </div>
-                  <div>
-                    <dt>Remaining</dt>
-                    <dd>{formatSar(invoice.remaining)}</dd>
-                  </div>
-                </dl>
-                <div className="invoice-status-row">
-                  <span>{invoice.paid} paid</span>
-                  <span>{invoice.partiallyPaid} partial</span>
-                  <span>{invoice.unpaid} unpaid</span>
-                </div>
-                <Link className="button button-secondary button-block" to={`/invoices/${invoice.batchReference}`}>
-                  View payment status
-                </Link>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
         ) : (
           <div className="empty">
@@ -1640,6 +1667,89 @@ function NotFoundPage() {
   );
 }
 
+function PortalSelectionPage() {
+  return (
+    <main className="portal-choice-page">
+      <header className="portal-choice-header">
+        <Link className="portal-choice-brand" to="/" aria-label="Klickit home">
+          <span aria-hidden="true">K</span>
+          <div>
+            <strong>Klickit</strong>
+            <small>Connected School Payments</small>
+          </div>
+        </Link>
+        <div className="portal-choice-security">
+          <span aria-hidden="true">◆</span>
+          Secure role-based access
+        </div>
+      </header>
+
+      <section className="portal-choice-content" aria-labelledby="portal-choice-heading">
+        <div className="portal-choice-copy">
+          <p className="eyebrow">Welcome to Klickit</p>
+          <h1 id="portal-choice-heading">Choose how you want to continue.</h1>
+          <p>
+            Access the workspace designed for your role. School teams manage collections and
+            reconciliation, while parents review and pay assigned fees.
+          </p>
+        </div>
+
+        <div className="portal-choice-grid">
+          <Link className="portal-choice-card portal-choice-card-school" to="/login">
+            <div className="portal-choice-card-top">
+              <span className="portal-choice-icon" aria-hidden="true">S</span>
+              <span className="portal-choice-tag">School staff</span>
+            </div>
+            <div>
+              <p className="eyebrow">Finance workspace</p>
+              <h2>School Finance Portal</h2>
+              <p>
+                Manage students, Virtual IBANs, invoices, collections, and reconciliation records.
+              </p>
+            </div>
+            <ul aria-label="School portal capabilities">
+              <li>Student and invoice management</li>
+              <li>Collection monitoring</li>
+              <li>Payment reconciliation</li>
+            </ul>
+            <strong className="portal-choice-action">
+              Continue as school <span aria-hidden="true">→</span>
+            </strong>
+          </Link>
+
+          <Link className="portal-choice-card portal-choice-card-parent" to="/parent/login">
+            <div className="portal-choice-card-top">
+              <span className="portal-choice-icon" aria-hidden="true">P</span>
+              <span className="portal-choice-tag">Parent or guardian</span>
+            </div>
+            <div>
+              <p className="eyebrow">Family payments</p>
+              <h2>Parent Payment Portal</h2>
+              <p>
+                Review linked students, check outstanding fees, and complete secure payments.
+              </p>
+            </div>
+            <ul aria-label="Parent portal capabilities">
+              <li>Family balance overview</li>
+              <li>Bank and card payments</li>
+              <li>Reconciled payment history</li>
+            </ul>
+            <strong className="portal-choice-action">
+              Continue as parent <span aria-hidden="true">→</span>
+            </strong>
+          </Link>
+        </div>
+
+        <div className="portal-choice-trust" aria-label="Platform assurances">
+          <span>✓ Verified payment records</span>
+          <span>✓ Protected role access</span>
+          <span>✓ Shared reconciliation data</span>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function SchoolApp() {
   const session = useSession();
   return (
@@ -1663,5 +1773,6 @@ function SchoolApp() {
 
 export default function App() {
   const location = useLocation();
+  if (location.pathname === '/') return <PortalSelectionPage />;
   return location.pathname.startsWith('/parent') ? <ParentPortal /> : <SchoolApp />;
 }

@@ -35,7 +35,7 @@ Open `http://localhost:5173/login`.
 - Username: `parent`
 - Password: `parent`
 
-Open `http://localhost:5173/parent/login`.
+Open `http://localhost:5173/` and choose **Parent Payment Portal**. The same role-selection screen links school staff to the School Finance Portal.
 
 ## Recommended Sprint 1 demonstration sequence
 
@@ -56,7 +56,7 @@ Open `http://localhost:5173/parent/login`.
 3. Open one student to review assigned Paid, Partially Paid, and Unpaid invoices.
 4. Open **School fees** to filter all family invoices by student and status.
 5. Select an Unpaid or Partially Paid invoice and create a Checkout session.
-6. Choose bank transfer and enter the complete remaining amount. Card instead charges the complete remaining balance automatically and shows no amount field.
+6. Choose bank transfer and enter the complete remaining amount. Card uses the **HyperPay Secure Checkout** presentation with a small **Demo environment** indicator, charges the complete remaining balance automatically, and validates a cardholder name, a 16-digit card number, an `MM/YY` expiry, and a 3-digit CVC. Prototype card data is accepted based on format only; no live HyperPay, real-card, or issuer check is performed.
 7. Continue the transfer and observe **Awaiting Bank Confirmation** for about five seconds.
 8. Try to pay another invoice and observe that the active session prevents parallel payments.
 9. The first substantial bank transfer arrives 1,000 SAR short in the sandbox. Review the confirmed partial amount and enter the remaining amount.
@@ -72,6 +72,7 @@ Open `http://localhost:5173/parent/login`.
 - Parent authentication and Checkout sessions are stored by the backend.
 - Checkout never displays success before the backend receives and verifies the provider credit.
 - The first substantial bank-transfer confirmation is intentionally 1,000 SAR below the entered amount so the partial-payment and second-transfer flow can be demonstrated.
+- Generated provider references use non-sensitive aliases rather than the real Virtual IBAN or parent National ID. The format is `PROVIDER-VRxxxxxx-INVOICE-PRxxxxxx-Pnn`, where `Pnn` increments for each confirmed payment against the same invoice.
 
 ## Production build
 
